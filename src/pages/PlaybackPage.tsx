@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWaybillStore } from '@/store/useWaybillStore';
 import RouteMap from '@/components/playback/RouteMap';
@@ -8,14 +8,14 @@ import EventPanel from '@/components/playback/EventPanel';
 import {
   Package,
   Truck,
-  User,
   Building,
   AlertTriangle,
-  ChevronDown,
   MapPin,
   Layers,
   List,
   ChevronsRight,
+  ArrowUpRight,
+  Calendar,
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import type { Waybill, TemperatureRecord, GpsPoint, TripEvent, DriftIncident, LoadingEvent } from '@/types';
@@ -35,22 +35,34 @@ export default function PlaybackPage() {
   const playbackIndex = useWaybillStore((state) => state.playbackIndex);
   const isPlaying = useWaybillStore((state) => state.isPlaying);
   const playbackSpeed = useWaybillStore((state) => state.playbackSpeed);
+  const playbackViewMode = useWaybillStore((state) => state.playbackViewMode);
+  const playbackRoute = useWaybillStore((state) => state.playbackRoute);
+  const playbackRouteDate = useWaybillStore((state) => state.playbackRouteDate);
   const setPlaybackIndex = useWaybillStore((state) => state.setPlaybackIndex);
   const setSelectedWaybill = useWaybillStore((state) => state.setSelectedWaybill);
   const setIsPlaying = useWaybillStore((state) => state.setIsPlaying);
+  const setPlaybackViewMode = useWaybillStore((state) => state.setPlaybackViewMode);
 
-  const [viewMode, setViewMode] = useState<ViewMode>('waybill');
-  const [selectedRoute, setSelectedRoute] = useState<string>('');
+  const [viewMode, setViewMode] = React.useState<ViewMode>(playbackViewMode || 'waybill');
+  const [selectedRoute, setSelectedRoute] = React.useState<string>(playbackRoute || '');
   const intervalRef = useRef<number | null>(null);
 
   const routes = useMemo(() => [...new Set(waybills.map((w) => w.route))], [waybills]);
 
+  useEffect(() => {
+    setViewMode(playbackViewMode);
+    if (playbackRoute) setSelectedRoute(playbackRoute);
+  }, [playbackViewMode, playbackRoute]);
+
   const routeWaybills = useMemo(() => {
     if (!selectedRoute) return [];
-    return waybills
-      .filter((w) => w.route === selectedRoute)
-      .sort((a, b) => new Date(a.departureTime).getTime() - new Date(b.departureTime).getTime());
-  }, [waybills, selectedRoute]);
+    let list = waybills.filter((w) => w.route === selectedRoute);
+    if (playbackRouteDate) {
+      const targetDay = dayjs(playbackRouteDate).format('YYYY-MM-DD');
+      list = list.filter((w) => dayjs(w.departureTime).format('YYYY-MM-DD') === targetDay);
+    }
+    return list.sort((a, b) => new Date(a.departureTime).getTime() - new Date(b.departureTime).getTime());
+  }, [waybills, selectedRoute, playbackRouteDate]);
 
   const virtualRouteWaybill = useMemo<RouteVirtualWaybill | null>(() => {
     if (viewMode !== 'route' || routeWaybills.length === 0) return null;
@@ -64,7 +76,6 @@ export default function PlaybackPage() {
     let globalIndex = 0;
 
     let offsetX = 0;
-    let maxX = 0;
     let baseY = 0;
 
     routeWaybills.forEach((wb) => {
@@ -80,7 +91,6 @@ export default function PlaybackPage() {
           x: p.x + offsetX,
           y: baseY,
         });
-        maxX = Math.max(maxX, p.x + offsetX);
       });
       if (wb.gpsPoints.length > 0) {
         const lastX = Math.max(...wb.gpsPoints.map((p) => p.x));
@@ -108,7 +118,7 @@ export default function PlaybackPage() {
 
     const totalLen = allTemps.length;
     const status: Waybill['status'] = allDrifts.some((d) =>
-      routeWaybills.some((w) => w.id.startsWith('YB') && w.status === 'alert')
+      routeWaybills.some((w) => w.status === 'alert')
     )
       ? 'alert'
       : allDrifts.length > 0
@@ -155,6 +165,7 @@ export default function PlaybackPage() {
         return {
           waybill: vr.segmentWaybills.find((w) => w.id === seg.waybillId),
           localIndex: playbackIndex - seg.start,
+          range: seg,
         };
       }
     }
@@ -209,6 +220,22 @@ export default function PlaybackPage() {
     setViewMode(mode);
     setIsPlaying(false);
     setPlaybackIndex(0);
+    setPlaybackViewMode(mode, mode === 'route' ? selectedRoute : undefined);
+  };
+
+  const handleRouteChange = (route: string) => {
+    setSelectedRoute(route);
+    setPlaybackIndex(0);
+    setIsPlaying(false);
+    setPlaybackViewMode('route', route);
+  };
+
+  const handleJumpToWaybill = (waybillId: string, startIndex: number = 0) => {
+    setViewMode('waybill');
+    setSelectedWaybill(waybillId);
+    setPlaybackIndex(startIndex);
+    setIsPlaying(false);
+    setPlaybackViewMode('waybill');
   };
 
   if (!displayWaybill) {
@@ -285,23 +312,29 @@ export default function PlaybackPage() {
                 </select>
               </div>
             ) : (
-              <div>
-                <div className="text-xs text-gray-500 mb-1">当前线路</div>
-                <select
-                  value={selectedRoute}
-                  onChange={(e) => {
-                    setSelectedRoute(e.target.value);
-                    setPlaybackIndex(0);
-                    setIsPlaying(false);
-                  }}
-                  className="h-9 px-3 py-1 rounded text-sm bg-cold-bg border border-cold-border text-cold-accent font-semibold focus:outline-none focus:border-cold-accent cursor-pointer"
-                >
-                  {routes.map((r) => (
-                    <option key={r} value={r}>
-                      {r} ({waybills.filter((w) => w.route === r).length} 车)
-                    </option>
-                  ))}
-                </select>
+              <div className="flex items-center gap-3">
+                <div>
+                  <div className="text-xs text-gray-500 mb-1">当前线路</div>
+                  <select
+                    value={selectedRoute}
+                    onChange={(e) => handleRouteChange(e.target.value)}
+                    className="h-9 px-3 py-1 rounded text-sm bg-cold-bg border border-cold-border text-cold-accent font-semibold focus:outline-none focus:border-cold-accent cursor-pointer"
+                  >
+                    {routes.map((r) => (
+                      <option key={r} value={r}>
+                        {r} ({waybills.filter((w) => w.route === r).length} 车)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {playbackRouteDate && (
+                  <div className="flex items-center gap-1.5 px-2 py-1.5 rounded bg-cold-bg border border-cold-border">
+                    <Calendar className="w-3.5 h-3.5 text-cold-accent" />
+                    <span className="text-xs text-cold-accent font-medium">
+                      {dayjs(playbackRouteDate).format('YYYY年MM月DD日')}
+                    </span>
+                  </div>
+                )}
               </div>
             )}
 
@@ -358,9 +391,13 @@ export default function PlaybackPage() {
         {isVirtual && currentSegmentInfo?.waybill && (
           <div className="mt-3 pt-3 border-t border-cold-border/50 flex items-center gap-3 text-xs">
             <span className="text-gray-500">当前段落:</span>
-            <span className="px-2 py-0.5 rounded bg-cold-accent/10 text-cold-accent font-mono">
+            <button
+              onClick={() => handleJumpToWaybill(currentSegmentInfo.waybill!.id, currentSegmentInfo.localIndex)}
+              className="px-2 py-0.5 rounded bg-cold-accent/10 text-cold-accent font-mono hover:bg-cold-accent/20 transition-colors flex items-center gap-1"
+            >
               {currentSegmentInfo.waybill.id}
-            </span>
+              <ArrowUpRight className="w-3 h-3" />
+            </button>
             <span className="text-gray-300">
               {currentSegmentInfo.waybill.driver} · {currentSegmentInfo.waybill.store}
             </span>
@@ -368,6 +405,46 @@ export default function PlaybackPage() {
               段内进度 {currentSegmentInfo.localIndex} /{' '}
               {currentSegmentInfo.waybill.temperatureRecords.length - 1}
             </span>
+          </div>
+        )}
+
+        {isVirtual && virtualRouteWaybill && (
+          <div className="mt-3 pt-3 border-t border-cold-border/50">
+            <div className="text-xs text-gray-500 mb-2">运单分段（点击跳转单运单查看）</div>
+            <div className="flex gap-2 flex-wrap">
+              {virtualRouteWaybill.segmentRanges.map((seg, idx) => {
+                const wb = virtualRouteWaybill.segmentWaybills.find((w) => w.id === seg.waybillId);
+                if (!wb) return null;
+                const isActive = currentSegmentInfo?.range?.waybillId === seg.waybillId;
+                const driftCount = wb.driftIncidents.length;
+                return (
+                  <button
+                    key={seg.waybillId}
+                    onClick={() => handleJumpToWaybill(seg.waybillId)}
+                    className={`
+                      flex items-center gap-2 px-2.5 py-1.5 rounded text-xs transition-all
+                      ${isActive
+                        ? 'bg-cold-accent text-white shadow-md shadow-cold-accent/30'
+                        : driftCount > 0
+                        ? 'bg-alert-red/10 text-alert-red border border-alert-red/30 hover:bg-alert-red/20'
+                        : 'bg-cold-bg border border-cold-border text-gray-300 hover:border-cold-accent/50'
+                      }
+                    `}
+                  >
+                    <MapPin className="w-3 h-3" />
+                    <span className="font-mono">{wb.id}</span>
+                    <span className="text-[10px] opacity-80">
+                      {dayjs(wb.departureTime).format('HH:mm')}
+                    </span>
+                    {driftCount > 0 && (
+                      <span className="text-[10px] bg-alert-red/20 px-1 rounded">
+                        {driftCount}次超温
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>

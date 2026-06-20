@@ -13,6 +13,7 @@ import {
   Package,
 } from 'lucide-react';
 import type { Waybill } from '@/types';
+import dayjs from 'dayjs';
 
 interface RouteSummary {
   route: string;
@@ -164,6 +165,8 @@ export default function RouteSummaryCard() {
     },
   };
 
+  const setPlaybackViewMode = useWaybillStore((state) => state.setPlaybackViewMode);
+
   const handleDrillToWaybill = (waybillId: string, toDriftIndex?: number) => {
     const wb = waybills.find((w) => w.id === waybillId);
     if (wb) {
@@ -174,6 +177,7 @@ export default function RouteSummaryCard() {
         setPlaybackIndex(0);
       }
       setIsPlaying(false);
+      setPlaybackViewMode('waybill');
       navigate('/playback');
     }
   };
@@ -182,6 +186,8 @@ export default function RouteSummaryCard() {
     setReportFilters({ route });
     const routeWaybills = filteredWaybills.filter((w) => w.route === route);
     if (routeWaybills.length > 0) {
+      const date = dayjs(routeWaybills[0].departureTime).format('YYYY-MM-DD');
+      setPlaybackViewMode('route', route, date);
       setSelectedWaybill(routeWaybills[0].id);
       setPlaybackIndex(0);
       setIsPlaying(false);

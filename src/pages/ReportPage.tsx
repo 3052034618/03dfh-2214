@@ -3,6 +3,7 @@ import { useWaybillStore } from '@/store/useWaybillStore';
 import FilterBar from '@/components/report/FilterBar';
 import DriftTable from '@/components/report/DriftTable';
 import RouteSummaryCard from '@/components/report/RouteSummaryCard';
+import RouteComparisonPanel from '@/components/report/RouteComparisonPanel';
 import { Printer, FileDown, TrendingUp, AlertTriangle, Clock, Award } from 'lucide-react';
 import dayjs from 'dayjs';
 
@@ -154,6 +155,11 @@ export default function ReportPage() {
       {/* 线路复盘摘要 */}
       <div className="no-print">
         <RouteSummaryCard />
+      </div>
+
+      {/* 线路横向对比 */}
+      <div className="no-print">
+        <RouteComparisonPanel />
       </div>
 
       {/* 温漂清单表格 */}
