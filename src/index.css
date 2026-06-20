@@ -1,0 +1,98 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: 'Noto Sans SC', system-ui, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #0A1929 0%, #0B2545 50%, #112240 100%);
+  color: #E2E8F0;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* 自定义滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0A1929;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1E3A5F;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3D8FB0;
+}
+
+/* 打印样式 */
+@media print {
+  body {
+    background: white;
+    color: black;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+}
+
+/* 拖拽区域样式 */
+.drop-zone-active {
+  border-color: #56B8DC !important;
+  background-color: rgba(86, 184, 220, 0.1) !important;
+  box-shadow: 0 0 30px rgba(86, 184, 220, 0.3);
+}
+
+/* 表格斑马纹 */
+.table-zebra tr:nth-child(even) {
+  background-color: rgba(30, 58, 95, 0.3);
+}
+
+/* 脉冲动画 */
+@keyframes vehicle-pulse {
+  0%, 100% {
+    r: 8;
+    opacity: 1;
+  }
+  50% {
+    r: 12;
+    opacity: 0.6;
+  }
+}
+
+.vehicle-marker {
+  animation: vehicle-pulse 1.5s ease-in-out infinite;
+}
+
+/* 发光效果 */
+.glow-blue {
+  filter: drop-shadow(0 0 8px rgba(86, 184, 220, 0.6));
+}
+
+.glow-red {
+  filter: drop-shadow(0 0 8px rgba(230, 57, 70, 0.6));
+}
