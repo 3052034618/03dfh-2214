@@ -75,13 +75,38 @@ export interface Waybill {
   vehiclePlate: string;
 }
 
+export type ImportedFileType = 'temperature' | 'gps' | 'loading' | 'unknown';
+
 export interface ImportedFile {
   id: string;
   name: string;
-  type: 'temperature' | 'gps' | 'loading' | 'unknown';
+  type: ImportedFileType;
   size: number;
   uploadTime: string;
   waybillId?: string;
+}
+
+export type WaybillMergeStatus = 'complete' | 'incomplete' | 'pending';
+
+export interface WaybillMergeInfo {
+  waybillId: string;
+  hasTemperature: boolean;
+  hasGps: boolean;
+  hasLoading: boolean;
+  status: WaybillMergeStatus;
+  missingTypes: ImportedFileType[];
+  fileIds: string[];
+}
+
+export type ValidationSeverity = 'error' | 'warning';
+
+export interface ValidationIssue {
+  id: string;
+  waybillId: string;
+  severity: ValidationSeverity;
+  category: 'time_gap' | 'timestamp_mismatch' | 'loading_out_of_range' | 'missing_data';
+  message: string;
+  detail: string;
 }
 
 export interface ReportFilters {
