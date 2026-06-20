@@ -1,10 +1,27 @@
 import { create } from 'zustand';
-import type { Waybill, ImportedFile, ImportedFileType, ReportFilters, WaybillMergeInfo, ValidationIssue } from '@/types';
+import type {
+  Waybill,
+  ImportedFile,
+  ImportedFileType,
+  ReportFilters,
+  WaybillMergeInfo,
+  ValidationIssue,
+  TemperatureRecord,
+  GpsPoint,
+  LoadingEvent,
+} from '@/types';
 import { getMockWaybills, getMockImportedFiles } from '@/utils/mockData';
 import { validateWaybill } from '@/utils/dataValidator';
+import {
+  parseTemperatureCSV,
+  parseGpsCSV,
+  parseLoadingCSV,
+  readFileAsText,
+} from '@/utils/csvParser';
+import { buildWaybill } from '@/utils/waybillBuilder';
 
-function extractWaybillId(filename: string): string | null {
-  const match = filename.match(/YB\d{10,}/i);
+export function extractWaybillId(filename: string): string | null {
+  const match = filename.match(/YB\d{6,}/i);
   if (match) return match[0].toUpperCase();
   const parts = filename.replace(/\.[^.]+$/, '').split(/[_\-\s]+/);
   for (const part of parts) {
@@ -14,7 +31,24 @@ function extractWaybillId(filename: string): string | null {
   return null;
 }
 
-function computeMergeInfo(files: ImportedFile[]): WaybillMergeInfo[] {
+function detectFileType(filename: string): ImportedFileType {
+  const lower = filename.toLowerCase();
+  if (lower.includes('temp') || lower.includes('温度')) return 'temperature';
+  if (lower.includes('gps') || lower.includes('gpx') || lower.includes('轨迹')) return 'gps';
+  if (lower.includes('loading') || lower.includes('装卸') || lower.includes('load')) return 'loading';
+  return 'unknown';
+}
+
+interface ParsedData {
+  tempRecords: TemperatureRecord[];
+  gpsPoints: GpsPoint[];
+  loadingEvents: LoadingEvent[];
+}
+
+function computeMergeInfo(
+  files: ImportedFile[],
+  existingWaybillIds: Set<string>
+): WaybillMergeInfo[] {
   const groups: Record<string, Record<string, ImportedFile[]>> = {};
 
   for (const file of files) {
@@ -27,10 +61,12 @@ function computeMergeInfo(files: ImportedFile[]): WaybillMergeInfo[] {
     }
   }
 
-  return Object.entries(groups).map(([waybillId, types]) => {
-    const hasTemperature = types.temperature.length > 0;
-    const hasGps = types.gps.length > 0;
-    const hasLoading = types.loading.length > 0;
+  return Object.entries(groups).map(([waybillId, typedGroups]) => {
+    const typed = typedGroups as { temperature: ImportedFile[]; gps: ImportedFile[]; loading: ImportedFile[] };
+    const hasTemperature = typed.temperature.length > 0;
+    const hasGps = typed.gps.length > 0;
+    const hasLoading = typed.loading.length > 0;
+    const hasWaybillRecord = existingWaybillIds.has(waybillId);
 
     const missingTypes: ImportedFileType[] = [];
     if (!hasTemperature) missingTypes.push('temperature');
@@ -38,16 +74,11 @@ function computeMergeInfo(files: ImportedFile[]): WaybillMergeInfo[] {
     if (!hasLoading) missingTypes.push('loading');
 
     let status: WaybillMergeInfo['status'] = 'complete';
-    if (missingTypes.length > 0) {
+    if (!hasWaybillRecord && missingTypes.length > 0) {
       status = missingTypes.length >= 2 ? 'pending' : 'incomplete';
     }
 
-    const fileIds = [
-      ...types.temperature,
-      ...types.gps,
-      ...types.loading,
-    ].map((f) => f.id);
-
+    const fileIds = [...typed.temperature, ...typed.gps, ...typed.loading].map((f) => f.id);
     return { waybillId, hasTemperature, hasGps, hasLoading, status, missingTypes, fileIds };
   });
 }
@@ -70,16 +101,17 @@ interface WaybillState {
   reportFilters: ReportFilters;
   mergeInfo: WaybillMergeInfo[];
   validationIssues: ValidationIssue[];
+  parsedFileContents: Record<string, ParsedData>;
 
   setSelectedWaybill: (id: string | null) => void;
   setPlaybackIndex: (index: number | ((prev: number) => number)) => void;
   setIsPlaying: (playing: boolean) => void;
   setPlaybackSpeed: (speed: number) => void;
-  addImportedFile: (file: ImportedFile) => void;
+  addImportedFile: (file: File) => Promise<void>;
   removeImportedFile: (id: string) => void;
   setReportFilters: (filters: Partial<ReportFilters>) => void;
   loadMockData: () => void;
-  recalcMergeInfo: () => void;
+  buildWaybillFromFiles: (waybillId: string) => void;
 }
 
 export const useWaybillStore = create<WaybillState>((set, get) => ({
@@ -95,13 +127,11 @@ export const useWaybillStore = create<WaybillState>((set, get) => ({
     carrier: '',
     driver: '',
     cargoType: '',
-    dateRange: {
-      start: '',
-      end: '',
-    },
+    dateRange: { start: '', end: '' },
   },
   mergeInfo: [],
   validationIssues: [],
+  parsedFileContents: {},
 
   setSelectedWaybill: (id) => set({ selectedWaybillId: id, playbackIndex: 0, isPlaying: false }),
   setPlaybackIndex: (index) =>
@@ -110,42 +140,137 @@ export const useWaybillStore = create<WaybillState>((set, get) => ({
     })),
   setIsPlaying: (playing) => set({ isPlaying: playing }),
   setPlaybackSpeed: (speed) => set({ playbackSpeed: speed }),
-  addImportedFile: (file) =>
+
+  addImportedFile: async (nativeFile: File) => {
+    const waybillId = extractWaybillId(nativeFile.name) || undefined;
+    const fileType = detectFileType(nativeFile.name);
+
+    const importedFile: ImportedFile = {
+      id: `file_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      name: nativeFile.name,
+      type: fileType,
+      size: nativeFile.size,
+      uploadTime: new Date().toISOString().replace('T', ' ').substring(0, 19),
+      waybillId,
+    };
+
+    let tempRecords: TemperatureRecord[] = [];
+    let gpsPoints: GpsPoint[] = [];
+    let loadingEvents: LoadingEvent[] = [];
+
+    try {
+      const text = await readFileAsText(nativeFile);
+      if (fileType === 'temperature') {
+        const result = await parseTemperatureCSV(text);
+        tempRecords = result.data;
+      } else if (fileType === 'gps') {
+        const result = await parseGpsCSV(text);
+        gpsPoints = result.data;
+      } else if (fileType === 'loading') {
+        const result = await parseLoadingCSV(text);
+        loadingEvents = result.data;
+      }
+    } catch (_e) { /* 解析失败不阻塞 */ }
+
     set((state) => {
-      const newFiles = [...state.importedFiles, file];
-      const mergeInfo = computeMergeInfo(newFiles);
-      const validations = computeValidations(state.waybills);
-      return { importedFiles: newFiles, mergeInfo, validationIssues: validations };
-    }),
+      const newFiles = [...state.importedFiles, importedFile];
+      let newWaybills = [...state.waybills];
+      const existingIds = new Set(newWaybills.map((w) => w.id));
+
+      const newContents: Record<string, ParsedData> = { ...state.parsedFileContents };
+      if (waybillId) {
+        const prev = newContents[waybillId] || { tempRecords: [], gpsPoints: [], loadingEvents: [] };
+        newContents[waybillId] = {
+          tempRecords: [...(prev.tempRecords || []), ...tempRecords],
+          gpsPoints: [...(prev.gpsPoints || []), ...gpsPoints],
+          loadingEvents: [...(prev.loadingEvents || []), ...loadingEvents],
+        };
+      }
+
+      if (waybillId && !existingIds.has(waybillId)) {
+        const contents = newContents[waybillId];
+        if (contents && contents.tempRecords.length > 5 && contents.gpsPoints.length > 5) {
+          try {
+            const newWaybill = buildWaybill({
+              waybillId,
+              tempRecords: contents.tempRecords,
+              gpsPoints: contents.gpsPoints,
+              loadingEvents: contents.loadingEvents,
+            });
+            newWaybills = [...newWaybills, newWaybill];
+            existingIds.add(waybillId);
+          } catch (_e) { /* 构建失败忽略 */ }
+        }
+      }
+
+      const mergeInfo = computeMergeInfo(newFiles, existingIds);
+      const validationIssues = computeValidations(newWaybills);
+
+      return {
+        importedFiles: newFiles,
+        parsedFileContents: newContents,
+        waybills: newWaybills,
+        mergeInfo,
+        validationIssues,
+      };
+    });
+  },
+
   removeImportedFile: (id) =>
     set((state) => {
       const newFiles = state.importedFiles.filter((f) => f.id !== id);
-      const mergeInfo = computeMergeInfo(newFiles);
+      const existingIds = new Set(state.waybills.map((w) => w.id));
+      const mergeInfo = computeMergeInfo(newFiles, existingIds);
       return { importedFiles: newFiles, mergeInfo };
     }),
+
   setReportFilters: (filters) =>
     set((state) => ({
       reportFilters: { ...state.reportFilters, ...filters },
     })),
+
   loadMockData: () => {
     const waybills = getMockWaybills();
     const files = getMockImportedFiles();
-    const mergeInfo = computeMergeInfo(files);
+    const existingIds = new Set(waybills.map((w) => w.id));
+    const mergeInfo = computeMergeInfo(files, existingIds);
     const validationIssues = computeValidations(waybills);
+    const parsedFileContents: Record<string, ParsedData> = {};
+    for (const w of waybills) {
+      parsedFileContents[w.id] = {
+        tempRecords: w.temperatureRecords,
+        gpsPoints: w.gpsPoints,
+        loadingEvents: w.loadingEvents,
+      };
+    }
     set({
       waybills,
       importedFiles: files,
       selectedWaybillId: waybills[0]?.id || null,
       mergeInfo,
       validationIssues,
+      parsedFileContents,
     });
   },
-  recalcMergeInfo: () => {
+
+  buildWaybillFromFiles: (waybillId) => {
     const state = get();
-    const mergeInfo = computeMergeInfo(state.importedFiles);
-    const validationIssues = computeValidations(state.waybills);
-    set({ mergeInfo, validationIssues });
+    const contents = state.parsedFileContents[waybillId];
+    if (!contents) return;
+    if (state.waybills.some((w) => w.id === waybillId)) return;
+    if (contents.tempRecords.length < 5 || contents.gpsPoints.length < 5) return;
+    try {
+      const newWaybill = buildWaybill({
+        waybillId,
+        tempRecords: contents.tempRecords,
+        gpsPoints: contents.gpsPoints,
+        loadingEvents: contents.loadingEvents,
+      });
+      const newWaybills = [...state.waybills, newWaybill];
+      const existingIds = new Set(newWaybills.map((w) => w.id));
+      const mergeInfo = computeMergeInfo(state.importedFiles, existingIds);
+      const validationIssues = computeValidations(newWaybills);
+      set({ waybills: newWaybills, mergeInfo, validationIssues });
+    } catch (_e) { /* 忽略构建错误 */ }
   },
 }));
-
-export { extractWaybillId };
